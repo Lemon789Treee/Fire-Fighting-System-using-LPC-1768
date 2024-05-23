@@ -1,0 +1,316 @@
+
+
+
+// Running lm35 temperature sensor  With lpc 1768 Using L298N Motor Driver that releases water when temperature from lm35 exceeds 80 Celsius 
+
+
+
+
+#include <LPC17xx.h>
+#include <stdio.h>
+
+unsigned char Msg1[36] = {"ADC"};
+unsigned char Msg2[16] = {""};
+
+unsigned int flag;
+
+void clear_ports() {
+    LPC_GPIO0->FIOCLR = 0xF << 15;
+    LPC_GPIO0->FIOCLR = 1 << 19;
+    LPC_GPIO0->FIOCLR = 1 << 20;
+}
+
+void delay_lcd(unsigned int r) {
+    unsigned int t;
+    for (t = 0; t < r; t++);
+}
+
+void write(int temp2, int type) {
+    clear_ports();
+    LPC_GPIO0->FIOPIN = temp2;
+    if (!type) {
+        LPC_GPIO0->FIOCLR = 1 << 19;
+    } else {
+        LPC_GPIO0->FIOSET = 1 << 19;
+    }
+    LPC_GPIO0->FIOSET = 1 << 20;
+    delay_lcd(25);
+    LPC_GPIO0->FIOCLR = 1 << 20;
+    return;
+}
+
+void lcd_comdata(int temp1, int type) {
+    int temp2 = temp1 & 0xF0;
+    temp2 <<= 11;
+    write(temp2, type);
+    temp2 = temp1 & 0x0F;
+    temp2 <<= 15;
+    write(temp2, type);
+    delay_lcd(1000);
+    return;
+}
+
+void lcd_init() {
+    LPC_GPIO0->FIODIR |= 0xF << 15 | 1 << 19 | 1 << 20;
+    clear_ports();
+    delay_lcd(3200);
+
+    lcd_comdata(0x33, 0);
+    delay_lcd(30000);
+
+    lcd_comdata(0x32, 0);
+    delay_lcd(30000);
+
+    lcd_comdata(0x28, 0);
+    delay_lcd(30000);
+
+    lcd_comdata(0x0c, 0);
+    delay_lcd(800);
+
+    lcd_comdata(0x06, 0);
+    delay_lcd(800);
+
+    lcd_comdata(0x01, 0);
+    delay_lcd(10000);
+
+    return;
+}
+
+void lcd_puts(unsigned char* str) {
+    unsigned int temp3, i = 0;
+    while (str[i]) {
+        temp3 = str[i];
+        lcd_comdata(temp3, 1);
+        i++;
+        if (i == 16) {
+            lcd_comdata(0xC0, 0);
+        }
+    }
+    return;
+}
+
+void delay(unsigned int r1) {
+    unsigned int r;
+    for (r = 0; r < r1; r++);
+    return;
+}
+
+void ADC_IRQHandler(void) {
+    unsigned int val = 23;
+    float res = 0;
+    float t2 = 0;
+
+    t2 = (float)(LPC_ADC->ADDR0 & (0xFFF << 4)) >> 4; // Assuming ADDR0 holds the ADC value
+    t2 = t2 * (3.3 / 4096); // Assuming 3.3V reference and 12-bit ADC
+    // Perform temperature calculation based on the sensor characteristics
+    // For example, if it's a thermistor, use the appropriate formula
+    // For demonstration, let's assume a linear relationship between voltage and temperature
+    res = (t2 - 0.5) * 100; // Example formula, adjust according to your sensor
+    if (res < val)
+        return;
+
+    sprintf(Msg2, "%.2f", res); // Convert float to string with two decimal places
+
+    lcd_comdata(0xc0, 0); // Move cursor to the second line
+    delay_lcd(80000);
+    lcd_puts(Msg2); // Display temperature on LCD
+}
+
+int main(void) {
+    SystemInit();
+    SystemCoreClockUpdate();
+    lcd_init();
+    lcd_comdata(0x80, 0); // Move cursor to the first line
+    delay_lcd(800);
+    lcd_puts(Msg1); // Display "ADC" on LCD
+    lcd_comdata(0xC0, 0); // Move cursor to the second line
+    delay_lcd(800);
+
+    LPC_PINCON->PINSEL1 |= 1 << 14; // P1.23 as AD0.5
+    LPC_SC->PCONP |= (1 << 12);
+    LPC_ADC->ADCR = (1 << 5) | (1 << 21) | (1 << 24); // Enable ADC, select AD0.5, and start conversion
+    LPC_ADC->ADINTEN = (1 << 0); // Enable ADC interrupt
+    NVIC_EnableIRQ(ADC_IRQn); // Enable ADC interrupt in NVIC
+
+    while (1) {
+        // Your main application code here
+    }
+    return 0;
+}
+
+
+
+// with PWM Control 
+
+
+#include <LPC17xx.H>
+
+void Clock_Wise(void);
+void AClock_Wise(void);
+
+unsigned long i;
+
+int main(void)
+{
+ SystemInit();
+ LPC_PINCON->PINSEL1 &= 0xFFCFFFFF; //P0.26 GPIO, P0.26 controls dir
+ LPC_PINCON->PINSEL3 &= 0xFFFCFFFF; //P1.24 GPIO
+ LPC_GPIO0->FIODIR |= 0x04000000; //P0.26 output
+ LPC_GPIO1->FIODIR |= 0x01000000; //P1.24 output
+
+ while(1)
+ {
+ Clock_Wise();
+ for(i=0;i<200000;i++);
+ AClock_Wise();
+ for(i=0;i<200000;i++);
+
+ } //end while(1)
+} //end main
+
+void Clock_Wise(void)
+{
+ LPC_GPIO1->FIOCLR = 0x01000000; //P1.24 Kept low to off DCM
+ for(i=0;i<10000;i++); //delay to componsate inertia
+ LPC_GPIO0->FIOSET = 0x04000000; //P0.26 coil is on
+ LPC_GPIO1->FIOSET = 0x01000000; //P1.24 motor in on
+ return;   
+} //end void Clock_Wise(void)
+
+void AClock_Wise(void)
+{
+ LPC_GPIO1->FIOCLR = 0x01000000; //P1.24 Kept low to off DCM
+ for(i=0;i<10000;i++); //delay to componsate inertia
+ LPC_GPIO0->FIOCLR = 0x04000000; //P0.26 coil is off
+ LPC_GPIO1->FIOSET = 0x01000000; //P1.24 Motor is on
+ return;
+} //end void AClock_Wise(void)
+
+*********************************************************************************
+//DC motor clockwise direction rotation based on push botton status
+
+#include<LPC17xx.h>
+void Clock_Wise(void);
+void AClock_Wise(void);
+unsigned long i;
+unsigned int key;
+int n=100000;
+int j;
+int main(void)
+{
+SystemInit();
+        LPC_PINCON->PINSEL1 &=0xFFCFFFFF;
+        LPC_PINCON->PINSEL3 &=0xFFFFCFFF;
+ LPC_PINCON->PINSEL4 &=0x00000000;
+
+ 
+ LPC_GPIO0->FIODIR|=0x04000000;//GPIO functionality selection of Port 0
+ LPC_GPIO1->FIODIR|=0x01000000;//GPIO functionality selection of Port 1
+
+ LPC_GPIO2->FIODIR |=0x00000000;//GPIO functionality selection of Port 2
+ 
+   while(1)
+  {
+        key=LPC_GPIO2->FIOPIN;
+        key=key&0x00000800;
+ if(key==0x00000800)
+ {
+    LPC_GPIO1->FIOCLR=0x01000000;
+  }
+ else
+ {
+    Clock_Wise();
+   for(i=0;i<200000;i++);
+  }
+     }
+
+}
+
+void Clock_Wise(void)
+{
+LPC_GPIO1->FIOCLR=0x01000000;
+for(i=0;i<10000;i++);
+LPC_GPIO0->FIOSET=0x040000000;
+LPC_GPIO1->FIOSET=0X01000000;
+
+}
+*********************************************************************************
+control speed of DC motor using PWM
+
+
+
+
+#include <lpc17xx.h>
+
+void pwm_init(void);
+void PWM1_IRQHandler(void);
+
+unsigned long int i,j;
+unsigned char flag,flag1;
+
+int main(void)
+{
+ SystemInit();
+ SystemCoreClockUpdate();
+ pwm_init();
+
+ while(1)
+    {
+       for(i=0;i<=1000;i++); // delay
+
+    }             
+}                            //end of main
+
+void pwm_init(void)
+{
+ LPC_SC->PCONP |= (1<<6); //PWM1 is powered
+ LPC_PINCON->PINSEL3 |= 0x00020000; //pwm1.5 is selected for the pin P1.24
+
+ LPC_PWM1->PR  = 0x00000000;       //Count frequency : Fpclk
+ LPC_PWM1->PCR = 0x00002000;        //select PWM5 single edge and PWM5 output is enabled
+ LPC_PWM1->MCR = 0x00000003;       //Reset and interrupt on PWMMR0
+ LPC_PWM1->MR0 = 0X00007530;      //setup match register 0[MR0] count to cycle time
+ LPC_PWM1->MR5 = 0x00000064;       //setup match register 5[MR5] coount to duty cycle
+ LPC_PWM1->LER = 0x000000FF;       //enable shadow copy register
+ LPC_PWM1->TCR = 0x00000002;       //RESET COUNTER AND PRESCALER
+ LPC_PWM1->TCR = 0x00000009;       //enable PWM and counter
+
+ NVIC_EnableIRQ(PWM1_IRQn);
+ return;
+}
+
+void PWM1_IRQHandler(void)
+{
+ LPC_PWM1->IR = 0xff;  //clear the interrupts
+
+ if(flag == 0x00)  // to increase the Ton period by 64 for every iteration till MR5 is less than 6978
+    {
+
+  LPC_PWM1->MR5 += 0X00000064;
+  LPC_PWM1->LER = 0x000000FF;
+
+
+  if(LPC_PWM1->MR5 >= 0X00006978)
+  {
+  flag1 = 0xff;
+  flag = 0xff;
+  LPC_PWM1->LER = 0x000000FF;
+  }
+ for(i=0;i<8000;i++);
+    }
+
+else if(flag1 == 0xff) // to increase the Toff period or to decrease Ton period by 64 for every iteration till MR5 is greater than BB8
+    {
+
+  LPC_PWM1->MR5 -= 0X00000064;
+  LPC_PWM1->LER = 0x000000FF;
+
+   if(LPC_PWM1->MR5 <= 0x00000BB8)
+  {
+  flag  = 0x00;
+  flag1 = 0x00;
+  LPC_PWM1->LER = 0X000000FF;
+  }
+   for(i=0;i<8000;i++);
+    }
+}
